@@ -1,10 +1,10 @@
 # AI Agent Guidelines
 
-## Project Goal
+## UI  
 
-The goal of this project is to migrate the tool triggered by `just dev` in
-[GigLog](https://github.com/joegoggin/gig-log) into it's own repo. Use the
-existing implementation as much as possible. 
+For the UI of this terminal app you should use [tui-realm](https://github.com/veeso/tui-realm).
+You should use the components provided in the standard library wherever
+possible.
 
 ## GitHub Project
 
