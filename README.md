@@ -46,7 +46,8 @@ Services describe long-running processes. Each service supports:
 - `command`: Required command and arguments. It must include at least one
   non-empty argument.
 - `watch`: Optional files or directories that must exist.
-- `port`: Optional primary service port.
+- `port`: Optional primary service port. If provided, it must be greater than
+  `0`.
 - `env`: Optional environment variables.
 - `readiness`: Optional HTTP or TCP readiness check.
 - `log_relay`: Optional log forwarding settings.
@@ -109,8 +110,8 @@ url = "http://127.0.0.1:8080"
 workflow = "frontend"
 ```
 
-Each docs entry must define either `path` or `url`. If `workflow` is provided,
-it must refer to a workflow defined in the same config.
+Each docs entry must define exactly one of `path` or `url`. If `workflow` is
+provided, it must refer to a workflow defined in the same config.
 
 See [`examples/api-web-common.toml`](examples/api-web-common.toml) for a fuller
 sample with API, frontend, database, cache, workflow, and docs entries.

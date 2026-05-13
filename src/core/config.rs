@@ -27,6 +27,7 @@ pub const DEFAULT_CONFIG_FILE: &str = "process-watch.toml";
 #[serde(deny_unknown_fields)]
 pub struct ProcessWatchConfig {
     /// Long-running services managed by process watch.
+    #[serde(default)]
     pub services: BTreeMap<String, ServiceConfig>,
     /// One-shot workflows that can run on demand or from watched paths.
     #[serde(default)]
@@ -116,13 +117,18 @@ impl ServiceConfig {
     fn validate(&self, name: &str, base_dir: &Path, errors: &mut Vec<ValidationError>) {
         validate_command(&format!("services.{name}.command"), &self.command, errors);
 
-        for (index, path) in self.watch.iter().enumerate() {
-            if !resolve_config_path(base_dir, path).exists() {
-                errors.push(ValidationError::new(
-                    format!("services.{name}.watch[{index}]"),
-                    format!("path does not exist: {path}"),
-                ));
-            }
+        validate_watch_paths(
+            &format!("services.{name}.watch"),
+            base_dir,
+            &self.watch,
+            errors,
+        );
+
+        if self.port == Some(0) {
+            errors.push(ValidationError::new(
+                format!("services.{name}.port"),
+                "service port must be greater than 0",
+            ));
         }
 
         if let Some(readiness) = &self.readiness {
@@ -265,14 +271,12 @@ impl WorkflowConfig {
     fn validate(&self, name: &str, base_dir: &Path, errors: &mut Vec<ValidationError>) {
         validate_command(&format!("workflows.{name}.command"), &self.command, errors);
 
-        for (index, path) in self.watch.iter().enumerate() {
-            if !resolve_config_path(base_dir, path).exists() {
-                errors.push(ValidationError::new(
-                    format!("workflows.{name}.watch[{index}]"),
-                    format!("path does not exist: {path}"),
-                ));
-            }
-        }
+        validate_watch_paths(
+            &format!("workflows.{name}.watch"),
+            base_dir,
+            &self.watch,
+            errors,
+        );
     }
 }
 
@@ -308,6 +312,31 @@ impl DocsConfig {
             errors.push(ValidationError::new(
                 format!("docs.{name}"),
                 "docs entry must define either path or url",
+            ));
+        }
+
+        if self.path.is_some() && self.url.is_some() {
+            errors.push(ValidationError::new(
+                format!("docs.{name}"),
+                "docs entry must define only one of path or url",
+            ));
+        }
+
+        if self
+            .path
+            .as_ref()
+            .is_some_and(|path| path.as_str().trim().is_empty())
+        {
+            errors.push(ValidationError::new(
+                format!("docs.{name}.path"),
+                "docs path must not be empty",
+            ));
+        }
+
+        if self.url.as_deref().is_some_and(|url| url.trim().is_empty()) {
+            errors.push(ValidationError::new(
+                format!("docs.{name}.url"),
+                "docs URL must not be empty",
             ));
         }
 
@@ -409,6 +438,34 @@ fn validate_command(field: &str, command: &[String], errors: &mut Vec<Validation
             errors.push(ValidationError::new(
                 format!("{field}[{index}]"),
                 "command arguments must not be empty",
+            ));
+        }
+    }
+}
+
+/// Adds validation errors for watch paths.
+///
+/// # Arguments
+///
+/// * `field` — Config field prefix used in validation diagnostics.
+/// * `base_dir` — Directory used when a watch path is relative.
+/// * `paths` — Watch path values from the config.
+/// * `errors` — Collection that receives validation failures.
+fn validate_watch_paths(
+    field: &str,
+    base_dir: &Path,
+    paths: &[Utf8PathBuf],
+    errors: &mut Vec<ValidationError>,
+) {
+    for (index, path) in paths.iter().enumerate() {
+        let field = format!("{field}[{index}]");
+
+        if path.as_str().trim().is_empty() {
+            errors.push(ValidationError::new(field, "watch path must not be empty"));
+        } else if !resolve_config_path(base_dir, path).exists() {
+            errors.push(ValidationError::new(
+                field,
+                format!("path does not exist: {path}"),
             ));
         }
     }

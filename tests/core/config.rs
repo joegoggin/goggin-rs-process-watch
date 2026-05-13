@@ -475,6 +475,40 @@ fn validation_rejects_empty_services() {
     assert!(errors.iter().any(|error| error.field == "services"));
 }
 
+/// Verifies validation rejects a config with no services table.
+///
+/// # Example Under Test
+///
+/// ```toml
+/// [workflows.check]
+/// command = ["cargo", "check"]
+/// ```
+///
+/// # Assertions
+///
+/// - The TOML deserializes into [`ProcessWatchConfig`] successfully.
+/// - Validation fails.
+/// - The validation errors include the `services` field.
+///
+/// # Why
+///
+/// Missing service definitions should use the same field-specific validation
+/// diagnostic as an explicitly empty services table.
+#[test]
+fn validation_rejects_missing_services() {
+    let config: ProcessWatchConfig = toml::from_str(
+        r#"
+        [workflows.check]
+        command = ["cargo", "check"]
+        "#,
+    )
+    .unwrap();
+
+    let errors = config.validate(Path::new(".")).unwrap_err();
+
+    assert!(errors.iter().any(|error| error.field == "services"));
+}
+
 /// Verifies validation rejects an empty service command array.
 ///
 /// # Example Under Test
@@ -578,6 +612,95 @@ fn validation_rejects_missing_watch_path_relative_to_base_dir() {
         errors
             .iter()
             .any(|error| error.field == "services.api.watch[0]")
+    );
+}
+
+/// Verifies validation rejects an invalid service port.
+///
+/// # Example Under Test
+///
+/// ```toml
+/// [services.api]
+/// command = ["cargo", "run"]
+/// port = 0
+/// ```
+///
+/// # Assertions
+///
+/// - The TOML deserializes into [`ProcessWatchConfig`] successfully.
+/// - Validation fails.
+/// - The validation errors include the `services.api.port` field.
+#[test]
+fn validation_rejects_invalid_service_port() {
+    let config: ProcessWatchConfig = toml::from_str(
+        r#"
+        [services.api]
+        command = ["cargo", "run"]
+        port = 0
+        "#,
+    )
+    .unwrap();
+
+    let errors = config.validate(Path::new(".")).unwrap_err();
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.field == "services.api.port")
+    );
+}
+
+/// Verifies validation rejects blank watch paths.
+///
+/// # Example Under Test
+///
+/// ```toml
+/// [services.api]
+/// command = ["cargo", "run"]
+/// watch = [""]
+///
+/// [workflows.check]
+/// command = ["cargo", "check"]
+/// watch = [" "]
+/// ```
+///
+/// # Assertions
+///
+/// - The TOML deserializes into [`ProcessWatchConfig`] successfully.
+/// - Validation fails.
+/// - The validation errors include the `services.api.watch[0]` field.
+/// - The validation errors include the `workflows.check.watch[0]` field.
+///
+/// # Why
+///
+/// Blank relative paths resolve to the config directory unless rejected before
+/// path resolution.
+#[test]
+fn validation_rejects_blank_watch_paths() {
+    let config: ProcessWatchConfig = toml::from_str(
+        r#"
+        [services.api]
+        command = ["cargo", "run"]
+        watch = [""]
+
+        [workflows.check]
+        command = ["cargo", "check"]
+        watch = [" "]
+        "#,
+    )
+    .unwrap();
+
+    let errors = config.validate(Path::new(".")).unwrap_err();
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.field == "services.api.watch[0]")
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.field == "workflows.check.watch[0]")
     );
 }
 
@@ -760,6 +883,90 @@ fn validation_rejects_unknown_docs_workflow() {
             .iter()
             .any(|error| error.field == "docs.rustdoc.workflow")
     );
+}
+
+/// Verifies validation rejects blank docs shortcut targets.
+///
+/// # Example Under Test
+///
+/// ```toml
+/// [services.api]
+/// command = ["cargo", "run"]
+///
+/// [docs.rustdoc]
+/// path = ""
+///
+/// [docs.preview]
+/// url = " "
+/// ```
+///
+/// # Assertions
+///
+/// - The TOML deserializes into [`ProcessWatchConfig`] successfully.
+/// - Validation fails.
+/// - The validation errors include the `docs.rustdoc.path` field.
+/// - The validation errors include the `docs.preview.url` field.
+#[test]
+fn validation_rejects_blank_docs_targets() {
+    let config: ProcessWatchConfig = toml::from_str(
+        r#"
+        [services.api]
+        command = ["cargo", "run"]
+
+        [docs.rustdoc]
+        path = ""
+
+        [docs.preview]
+        url = " "
+        "#,
+    )
+    .unwrap();
+
+    let errors = config.validate(Path::new(".")).unwrap_err();
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.field == "docs.rustdoc.path")
+    );
+    assert!(errors.iter().any(|error| error.field == "docs.preview.url"));
+}
+
+/// Verifies validation rejects docs shortcuts with both target kinds.
+///
+/// # Example Under Test
+///
+/// ```toml
+/// [services.api]
+/// command = ["cargo", "run"]
+///
+/// [docs.rustdoc]
+/// path = "target/doc"
+/// url = "http://127.0.0.1:8080"
+/// ```
+///
+/// # Assertions
+///
+/// - The TOML deserializes into [`ProcessWatchConfig`] successfully.
+/// - Validation fails.
+/// - The validation errors include the `docs.rustdoc` field.
+#[test]
+fn validation_rejects_docs_entries_with_both_path_and_url() {
+    let config: ProcessWatchConfig = toml::from_str(
+        r#"
+        [services.api]
+        command = ["cargo", "run"]
+
+        [docs.rustdoc]
+        path = "target/doc"
+        url = "http://127.0.0.1:8080"
+        "#,
+    )
+    .unwrap();
+
+    let errors = config.validate(Path::new(".")).unwrap_err();
+
+    assert!(errors.iter().any(|error| error.field == "docs.rustdoc"));
 }
 
 /// Verifies validation accumulates multiple errors in one pass.
