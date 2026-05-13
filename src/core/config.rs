@@ -6,7 +6,9 @@ use std::{
 use camino::Utf8PathBuf;
 use serde::Deserialize;
 
-use crate::core::error::{ConfigError, ValidationError, ValidationResult, validation_error};
+use anyhow::Context;
+
+use crate::core::error::{AppResult, ValidationError, ValidationErrors, ValidationResult};
 
 pub const DEFAULT_CONFIG_FILE: &str = "process-watch.toml";
 
@@ -20,67 +22,12 @@ pub struct ProcessWatchConfig {
     pub docs: BTreeMap<String, DocsConfig>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ServiceConfig {
-    pub label: Option<String>,
-    pub command: Vec<String>,
-    #[serde(default)]
-    pub watch: Vec<Utf8PathBuf>,
-    pub port: Option<u16>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    pub readiness: Option<ReadinessCheck>,
-    pub log_relay: Option<LogRelayConfig>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ReadinessCheck {
-    Http {
-        url: String,
-        #[serde(default)]
-        expected_status: Option<u16>,
-    },
-    Tcp {
-        host: String,
-        port: u16,
-    },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LogRelayConfig {
-    pub enabled: bool,
-    pub target: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkflowConfig {
-    pub label: Option<String>,
-    pub command: Vec<String>,
-    #[serde(default)]
-    pub watch: Vec<Utf8PathBuf>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DocsConfig {
-    pub label: Option<String>,
-    pub path: Option<Utf8PathBuf>,
-    pub url: Option<String>,
-    pub workflow: Option<String>,
-}
-
 impl ProcessWatchConfig {
     pub fn validate(&self, base_dir: &Path) -> ValidationResult {
         let mut errors = Vec::new();
 
         if self.services.is_empty() {
-            errors.push(validation_error(
+            errors.push(ValidationError::new(
                 "services",
                 "at least one service is required",
             ));
@@ -101,9 +48,23 @@ impl ProcessWatchConfig {
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(errors)
+            Err(ValidationErrors(errors))
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceConfig {
+    pub label: Option<String>,
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub watch: Vec<Utf8PathBuf>,
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    pub readiness: Option<ReadinessCheck>,
+    pub log_relay: Option<LogRelayConfig>,
 }
 
 impl ServiceConfig {
@@ -112,7 +73,7 @@ impl ServiceConfig {
 
         for (index, path) in self.watch.iter().enumerate() {
             if !resolve_config_path(base_dir, path).exists() {
-                errors.push(validation_error(
+                errors.push(ValidationError::new(
                     format!("services.{name}.watch[{index}]"),
                     format!("path does not exist: {path}"),
                 ));
@@ -129,6 +90,20 @@ impl ServiceConfig {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ReadinessCheck {
+    Http {
+        url: String,
+        #[serde(default)]
+        expected_status: Option<u16>,
+    },
+    Tcp {
+        host: String,
+        port: u16,
+    },
+}
+
 impl ReadinessCheck {
     fn validate(&self, field: &str, errors: &mut Vec<ValidationError>) {
         match self {
@@ -137,14 +112,14 @@ impl ReadinessCheck {
                 expected_status,
             } => {
                 if !(url.starts_with("http://") || url.starts_with("https://")) {
-                    errors.push(validation_error(
+                    errors.push(ValidationError::new(
                         format!("{field}.url"),
                         "HTTP readiness URL must start with http:// or https://",
                     ));
                 }
 
                 if expected_status.is_some_and(|status| !(100..=599).contains(&status)) {
-                    errors.push(validation_error(
+                    errors.push(ValidationError::new(
                         format!("{field}.expected_status"),
                         "expected status must be between 100 and 599",
                     ));
@@ -152,14 +127,14 @@ impl ReadinessCheck {
             }
             ReadinessCheck::Tcp { host, port } => {
                 if host.trim().is_empty() {
-                    errors.push(validation_error(
+                    errors.push(ValidationError::new(
                         format!("{field}.host"),
                         "TCP readiness host must not be empty",
                     ));
                 }
 
                 if *port == 0 {
-                    errors.push(validation_error(
+                    errors.push(ValidationError::new(
                         format!("{field}.port"),
                         "TCP readiness port must be greater than 0",
                     ));
@@ -167,6 +142,13 @@ impl ReadinessCheck {
             }
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogRelayConfig {
+    pub enabled: bool,
+    pub target: Option<String>,
 }
 
 impl LogRelayConfig {
@@ -177,12 +159,23 @@ impl LogRelayConfig {
                 .as_deref()
                 .is_some_and(|target| target.trim().is_empty())
         {
-            errors.push(validation_error(
+            errors.push(ValidationError::new(
                 format!("{field}.target"),
                 "target must not be empty when log relay is enabled",
             ));
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowConfig {
+    pub label: Option<String>,
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub watch: Vec<Utf8PathBuf>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 impl WorkflowConfig {
@@ -191,13 +184,22 @@ impl WorkflowConfig {
 
         for (index, path) in self.watch.iter().enumerate() {
             if !resolve_config_path(base_dir, path).exists() {
-                errors.push(validation_error(
+                errors.push(ValidationError::new(
                     format!("workflows.{name}.watch[{index}]"),
                     format!("path does not exist: {path}"),
                 ));
             }
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocsConfig {
+    pub label: Option<String>,
+    pub path: Option<Utf8PathBuf>,
+    pub url: Option<String>,
+    pub workflow: Option<String>,
 }
 
 impl DocsConfig {
@@ -208,7 +210,7 @@ impl DocsConfig {
         errors: &mut Vec<ValidationError>,
     ) {
         if self.path.is_none() && self.url.is_none() {
-            errors.push(validation_error(
+            errors.push(ValidationError::new(
                 format!("docs.{name}"),
                 "docs entry must define either path or url",
             ));
@@ -217,39 +219,11 @@ impl DocsConfig {
         if let Some(workflow) = &self.workflow
             && !workflows.contains_key(workflow)
         {
-            errors.push(validation_error(
+            errors.push(ValidationError::new(
                 format!("docs.{name}.workflow"),
                 format!("unknown workflow reference: {workflow}"),
             ));
         }
-    }
-}
-
-fn validate_command(field: &str, command: &[String], errors: &mut Vec<ValidationError>) {
-    if command.is_empty() {
-        errors.push(validation_error(
-            field,
-            "command must include at least one argument",
-        ));
-    }
-
-    for (index, arg) in command.iter().enumerate() {
-        if arg.trim().is_empty() {
-            errors.push(validation_error(
-                format!("{field}[{index}]"),
-                "command arguments must not be empty",
-            ));
-        }
-    }
-}
-
-fn resolve_config_path(base_dir: &Path, path: &camino::Utf8Path) -> PathBuf {
-    let path = Path::new(path.as_str());
-
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base_dir.join(path)
     }
 }
 
@@ -261,21 +235,16 @@ pub struct LoadedConfig {
 }
 
 impl LoadedConfig {
-    pub fn new(path_override: Option<&Path>) -> Result<LoadedConfig, ConfigError> {
+    pub fn new(path_override: Option<&Path>) -> AppResult<LoadedConfig> {
         let path = path_override
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE));
 
-        let source = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
+        let source = std::fs::read_to_string(&path)
+            .with_context(|| format!("could not read config at {}", path.display()))?;
 
-        let config =
-            toml::from_str::<ProcessWatchConfig>(&source).map_err(|source| ConfigError::Parse {
-                path: path.clone(),
-                source,
-            })?;
+        let config = toml::from_str::<ProcessWatchConfig>(&source)
+            .with_context(|| format!("could not parse config at {}", path.display()))?;
 
         let base_dir = path
             .parent()
@@ -292,5 +261,33 @@ impl LoadedConfig {
 
     pub fn resolve_path(&self, path: &camino::Utf8Path) -> PathBuf {
         resolve_config_path(&self.base_dir, path)
+    }
+}
+
+fn validate_command(field: &str, command: &[String], errors: &mut Vec<ValidationError>) {
+    if command.is_empty() {
+        errors.push(ValidationError::new(
+            field,
+            "command must include at least one argument",
+        ));
+    }
+
+    for (index, arg) in command.iter().enumerate() {
+        if arg.trim().is_empty() {
+            errors.push(ValidationError::new(
+                format!("{field}[{index}]"),
+                "command arguments must not be empty",
+            ));
+        }
+    }
+}
+
+fn resolve_config_path(base_dir: &Path, path: &camino::Utf8Path) -> PathBuf {
+    let path = Path::new(path.as_str());
+
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
     }
 }
