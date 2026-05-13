@@ -1,3 +1,9 @@
+//! Process-watch configuration loading and validation.
+//!
+//! This module defines the TOML schema used by `process-watch.toml`, loads
+//! configs from disk, resolves config-relative paths, and accumulates
+//! field-specific validation errors for user-facing diagnostics.
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -10,19 +16,40 @@ use anyhow::Context;
 
 use crate::core::error::{AppResult, ValidationError, ValidationErrors, ValidationResult};
 
+/// Default config file name used when no explicit path is provided.
 pub const DEFAULT_CONFIG_FILE: &str = "process-watch.toml";
 
+/// Root process-watch configuration loaded from TOML.
+///
+/// The top-level tables use dynamic names, so each map key is the service,
+/// workflow, or documentation shortcut identifier from the config file.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessWatchConfig {
+    /// Long-running services managed by process watch.
     pub services: BTreeMap<String, ServiceConfig>,
+    /// One-shot workflows that can run on demand or from watched paths.
     #[serde(default)]
     pub workflows: BTreeMap<String, WorkflowConfig>,
+    /// Documentation and preview shortcuts.
     #[serde(default)]
     pub docs: BTreeMap<String, DocsConfig>,
 }
 
 impl ProcessWatchConfig {
+    /// Validates the complete process-watch config.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_dir` — Directory used to resolve relative watched paths.
+    ///
+    /// # Returns
+    ///
+    /// A [`ValidationResult`] indicating whether the config is valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidationErrors`] if one or more config fields are invalid.
     pub fn validate(&self, base_dir: &Path) -> ValidationResult {
         let mut errors = Vec::new();
 
@@ -53,21 +80,39 @@ impl ProcessWatchConfig {
     }
 }
 
+/// Long-running process configuration.
+///
+/// Services are intended for processes such as API servers, frontend dev
+/// servers, databases, and cache instances that should be started and monitored.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
+    /// Optional human-readable label shown in the terminal UI.
     pub label: Option<String>,
+    /// Command and arguments used to start the service.
     pub command: Vec<String>,
+    /// Files or directories that should trigger a service restart.
     #[serde(default)]
     pub watch: Vec<Utf8PathBuf>,
+    /// Primary port exposed by the service.
     pub port: Option<u16>,
+    /// Environment variables passed to the service process.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Optional readiness check used to decide when the service is available.
     pub readiness: Option<ReadinessCheck>,
+    /// Optional log relay configuration for service output.
     pub log_relay: Option<LogRelayConfig>,
 }
 
 impl ServiceConfig {
+    /// Adds validation errors for a service config.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Service table name from the config.
+    /// * `base_dir` — Directory used to resolve relative watched paths.
+    /// * `errors` — Collection that receives validation failures.
     fn validate(&self, name: &str, base_dir: &Path, errors: &mut Vec<ValidationError>) {
         validate_command(&format!("services.{name}.command"), &self.command, errors);
 
@@ -90,21 +135,34 @@ impl ServiceConfig {
     }
 }
 
+/// Readiness check used to decide whether a service is available.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReadinessCheck {
+    /// Checks readiness by requesting an HTTP or HTTPS URL.
     Http {
+        /// URL requested by the readiness check.
         url: String,
+        /// Optional expected HTTP status code.
         #[serde(default)]
         expected_status: Option<u16>,
     },
+    /// Checks readiness by opening a TCP connection.
     Tcp {
+        /// Hostname or IP address used for the TCP connection.
         host: String,
+        /// Port used for the TCP connection.
         port: u16,
     },
 }
 
 impl ReadinessCheck {
+    /// Adds validation errors for a readiness check.
+    ///
+    /// # Arguments
+    ///
+    /// * `field` — Config field prefix used in validation diagnostics.
+    /// * `errors` — Collection that receives validation failures.
     fn validate(&self, field: &str, errors: &mut Vec<ValidationError>) {
         match self {
             ReadinessCheck::Http {
@@ -144,14 +202,23 @@ impl ReadinessCheck {
     }
 }
 
+/// Log relay configuration for a service.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LogRelayConfig {
+    /// Whether relay forwarding is enabled.
     pub enabled: bool,
+    /// Optional relay target name.
     pub target: Option<String>,
 }
 
 impl LogRelayConfig {
+    /// Adds validation errors for a log relay config.
+    ///
+    /// # Arguments
+    ///
+    /// * `field` — Config field prefix used in validation diagnostics.
+    /// * `errors` — Collection that receives validation failures.
     fn validate(&self, field: &str, errors: &mut Vec<ValidationError>) {
         if self.enabled
             && self
@@ -167,18 +234,34 @@ impl LogRelayConfig {
     }
 }
 
+/// One-shot workflow configuration.
+///
+/// Workflows use the same command, watch, and environment concepts as services
+/// but are intended for commands such as checks, tests, and documentation
+/// builds.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowConfig {
+    /// Optional human-readable label shown in the terminal UI.
     pub label: Option<String>,
+    /// Command and arguments used to run the workflow.
     pub command: Vec<String>,
+    /// Files or directories that should trigger the workflow.
     #[serde(default)]
     pub watch: Vec<Utf8PathBuf>,
+    /// Environment variables passed to the workflow process.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
 
 impl WorkflowConfig {
+    /// Adds validation errors for a workflow config.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Workflow table name from the config.
+    /// * `base_dir` — Directory used to resolve relative watched paths.
+    /// * `errors` — Collection that receives validation failures.
     fn validate(&self, name: &str, base_dir: &Path, errors: &mut Vec<ValidationError>) {
         validate_command(&format!("workflows.{name}.command"), &self.command, errors);
 
@@ -193,16 +276,28 @@ impl WorkflowConfig {
     }
 }
 
+/// Documentation or preview shortcut configuration.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DocsConfig {
+    /// Optional human-readable label shown in the terminal UI.
     pub label: Option<String>,
+    /// Optional local documentation path.
     pub path: Option<Utf8PathBuf>,
+    /// Optional documentation or preview URL.
     pub url: Option<String>,
+    /// Optional workflow name that builds or refreshes this docs target.
     pub workflow: Option<String>,
 }
 
 impl DocsConfig {
+    /// Adds validation errors for a docs shortcut config.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Docs table name from the config.
+    /// * `workflows` — Workflow definitions available for reference checks.
+    /// * `errors` — Collection that receives validation failures.
     fn validate(
         &self,
         name: &str,
@@ -227,14 +322,32 @@ impl DocsConfig {
     }
 }
 
+/// Loaded process-watch config and its path context.
 #[derive(Debug)]
 pub struct LoadedConfig {
+    /// Config file path that was loaded.
     pub path: PathBuf,
+    /// Base directory used to resolve config-relative paths.
     pub base_dir: PathBuf,
+    /// Parsed process-watch config.
     pub config: ProcessWatchConfig,
 }
 
 impl LoadedConfig {
+    /// Creates a loaded config from an optional path override.
+    ///
+    /// # Arguments
+    ///
+    /// * `path_override` — Optional config path used instead of
+    ///   [`DEFAULT_CONFIG_FILE`].
+    ///
+    /// # Returns
+    ///
+    /// A [`LoadedConfig`] with parsed TOML and path context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`anyhow::Error`] if the config cannot be read or parsed.
     pub fn new(path_override: Option<&Path>) -> AppResult<LoadedConfig> {
         let path = path_override
             .map(PathBuf::from)
@@ -259,11 +372,30 @@ impl LoadedConfig {
         })
     }
 
+    /// Resolves a path relative to the loaded config file.
+    ///
+    /// Absolute paths are returned unchanged. Relative paths are resolved from
+    /// the directory containing the loaded config file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` — Path from the loaded config.
+    ///
+    /// # Returns
+    ///
+    /// A [`PathBuf`] containing the resolved filesystem path.
     pub fn resolve_path(&self, path: &camino::Utf8Path) -> PathBuf {
         resolve_config_path(&self.base_dir, path)
     }
 }
 
+/// Adds validation errors for a command argument list.
+///
+/// # Arguments
+///
+/// * `field` — Config field prefix used in validation diagnostics.
+/// * `command` — Command and argument values from the config.
+/// * `errors` — Collection that receives validation failures.
 fn validate_command(field: &str, command: &[String], errors: &mut Vec<ValidationError>) {
     if command.is_empty() {
         errors.push(ValidationError::new(
@@ -282,6 +414,16 @@ fn validate_command(field: &str, command: &[String], errors: &mut Vec<Validation
     }
 }
 
+/// Resolves a config path against a base directory.
+///
+/// # Arguments
+///
+/// * `base_dir` — Directory used when `path` is relative.
+/// * `path` — Absolute or relative config path.
+///
+/// # Returns
+///
+/// A [`PathBuf`] containing the resolved filesystem path.
 fn resolve_config_path(base_dir: &Path, path: &camino::Utf8Path) -> PathBuf {
     let path = Path::new(path.as_str());
 
