@@ -5,6 +5,8 @@ use core::error::ProcessWatchError;
 
 use clap::Parser;
 
+use crate::core::config::LoadedConfig;
+
 pub fn run() -> Result<(), ProcessWatchError> {
     run_with(std::env::args_os())
 }
@@ -21,8 +23,7 @@ where
 fn dispatch(cli: Cli) -> Result<(), ProcessWatchError> {
     match cli.command {
         Command::Run { config } => {
-            // Issue #4 will load and validate this path before starting the UI.
-            let _config_override = config;
+            let _config = LoadedConfig::new(config.as_deref())?;
             Ok(())
         }
     }

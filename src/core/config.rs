@@ -1,7 +1,14 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use camino::Utf8PathBuf;
 use serde::Deserialize;
+
+use crate::core::error::ConfigError;
+
+pub const DEFAULT_CONFIG_FILE: &str = "process-watch.toml";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +75,54 @@ pub struct DocsConfig {
     pub workflow: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct LoadedConfig {
+    pub path: PathBuf,
+    pub base_dir: PathBuf,
+    pub config: ProcessWatchConfig,
+}
+
+impl LoadedConfig {
+    pub fn new(path_override: Option<&Path>) -> Result<LoadedConfig, ConfigError> {
+        let path = path_override
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE));
+
+        let source = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+
+        let config =
+            toml::from_str::<ProcessWatchConfig>(&source).map_err(|source| ConfigError::Parse {
+                path: path.clone(),
+                source,
+            })?;
+
+        let base_dir = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        Ok(LoadedConfig {
+            path,
+            base_dir,
+            config,
+        })
+    }
+
+    pub fn resolve_path(&self, path: &camino::Utf8Path) -> PathBuf {
+        let path = Path::new(path.as_str());
+
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.base_dir.join(path)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +169,56 @@ mod tests {
         ));
         assert!(config.workflows.contains_key("check"));
         assert!(config.docs.contains_key("rustdoc"));
+    }
+
+    #[test]
+    fn resolves_relative_paths_from_config_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("process-watch.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"
+        [services.api]
+        command = ["cargo", "run"]
+        watch = ["crates/api"]
+        "#,
+        )
+        .unwrap();
+
+        let loaded = LoadedConfig::new(Some(&path)).unwrap();
+        let service = loaded.config.services.get("api").unwrap();
+        let resolved = loaded.resolve_path(&service.watch[0]);
+
+        assert_eq!(resolved, path.parent().unwrap().join("crates/api"));
+    }
+
+    #[test]
+    fn resolve_path_leaves_absolute_paths_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("process-watch.toml");
+        let absolute_watch = dir.path().join("src");
+        let absolute_watch = camino::Utf8PathBuf::from_path_buf(absolute_watch).unwrap();
+
+        std::fs::write(
+            &path,
+            format!(
+                r#"
+            [services.api]
+            command = ["cargo", "run"]
+            watch = ["{}"]
+            "#,
+                absolute_watch
+            ),
+        )
+        .unwrap();
+
+        let loaded = LoadedConfig::new(Some(&path)).unwrap();
+        let service = loaded.config.services.get("api").unwrap();
+
+        assert_eq!(
+            loaded.resolve_path(&service.watch[0]),
+            absolute_watch.as_std_path()
+        );
     }
 }
