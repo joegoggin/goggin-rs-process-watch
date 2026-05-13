@@ -1,3 +1,5 @@
+use std::{fmt::Display, ops::Deref};
+
 pub type AppResult<T = ()> = anyhow::Result<T>;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -18,10 +20,10 @@ impl ValidationError {
 
 pub type ValidationResult = Result<(), ValidationErrors>;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub struct ValidationErrors(pub Vec<ValidationError>);
 
-impl std::ops::Deref for ValidationErrors {
+impl Deref for ValidationErrors {
     type Target = [ValidationError];
 
     fn deref(&self) -> &Self::Target {
@@ -29,7 +31,7 @@ impl std::ops::Deref for ValidationErrors {
     }
 }
 
-impl std::fmt::Display for ValidationErrors {
+impl Display for ValidationErrors {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(formatter, "invalid config:")?;
 
@@ -40,5 +42,3 @@ impl std::fmt::Display for ValidationErrors {
         Ok(())
     }
 }
-
-impl std::error::Error for ValidationErrors {}
