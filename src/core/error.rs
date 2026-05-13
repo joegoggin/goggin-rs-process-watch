@@ -1,10 +1,10 @@
 #[derive(Debug, thiserror::Error)]
-pub enum ConsoleError {
+pub enum ProcessWatchError {
     #[error(transparent)]
     Cli(#[from] clap::Error),
 }
 
-impl ConsoleError {
+impl ProcessWatchError {
     pub fn exit(self) -> ! {
         match self {
             Self::Cli(error) => error.exit(),

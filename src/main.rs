@@ -1,5 +1,5 @@
 fn main() {
-    if let Err(error) = goggin_rs_console::run() {
+    if let Err(error) = goggin_rs_process_watch::run() {
         error.exit();
     }
 }

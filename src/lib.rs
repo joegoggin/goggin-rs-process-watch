@@ -1,15 +1,15 @@
 mod core;
 
 use core::cli::{Cli, Command};
-use core::error::ConsoleError;
+use core::error::ProcessWatchError;
 
 use clap::Parser;
 
-pub fn run() -> Result<(), ConsoleError> {
+pub fn run() -> Result<(), ProcessWatchError> {
     run_with(std::env::args_os())
 }
 
-pub fn run_with<I, T>(args: I) -> Result<(), ConsoleError>
+pub fn run_with<I, T>(args: I) -> Result<(), ProcessWatchError>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
@@ -18,7 +18,7 @@ where
     dispatch(cli)
 }
 
-fn dispatch(cli: Cli) -> Result<(), ConsoleError> {
+fn dispatch(cli: Cli) -> Result<(), ProcessWatchError> {
     match cli.command {
         Command::Run { config } => {
             // Issue #4 will load and validate this path before starting the UI.

@@ -8,7 +8,7 @@ possible.
 
 ## GitHub Project
 
-The GitHub Project associated with this project is [goggin-rs-console](https://github.com/users/joegoggin/projects/32)
+The GitHub Project associated with this project is [goggin-rs-process-watch](https://github.com/users/joegoggin/projects/32)
 
 ## Git
 
@@ -19,4 +19,3 @@ When working with git you should follow these conventions:
 - NEVER create a new branch without my permission
 - NEVER commit without my permission
 - NEVER push with my permission
-

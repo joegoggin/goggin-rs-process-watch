@@ -3,20 +3,20 @@ use predicates::prelude::*;
 
 #[test]
 fn top_level_help_lists_run_command() {
-    let mut cmd = Command::cargo_bin("goggin-rs-console").unwrap();
+    let mut cmd = Command::cargo_bin("goggin-rs-process-watch").unwrap();
 
     cmd.arg("--help")
         .assert()
         .success()
         .stdout(predicate::str::contains("run"))
         .stdout(predicate::str::contains(
-            "configurable Rust development console",
+            "Watch and manage configured development processes",
         ));
 }
 
 #[test]
 fn run_help_describes_config_override() {
-    let mut cmd = Command::cargo_bin("goggin-rs-console").unwrap();
+    let mut cmd = Command::cargo_bin("goggin-rs-process-watch").unwrap();
 
     cmd.args(["run", "--help"])
         .assert()

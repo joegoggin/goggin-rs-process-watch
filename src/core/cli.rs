@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "goggin-rs-console",
-    about = "Run a configurable Rust development console"
+    name = "goggin-rs-process-watch",
+    about = "Watch and manage configured development processes"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -14,7 +14,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Start the console using the discovered config or an explicit config path.
+    /// Start process watching using the discovered config or an explicit config path.
     Run {
         #[arg(
             short,
@@ -30,9 +30,14 @@ pub enum Command {
 fn parses_run_config_override() {
     use clap::Parser;
 
-    let cli = Cli::try_parse_from(["goggin-rs-console", "run", "--config", "console.local.toml"])
-        .unwrap();
+    let cli = Cli::try_parse_from([
+        "goggin-rs-process-watch",
+        "run",
+        "--config",
+        "process-watch.local.toml",
+    ])
+    .unwrap();
 
     let Command::Run { config } = cli.command;
-    assert_eq!(config.unwrap(), PathBuf::from("console.local.toml"));
+    assert_eq!(config.unwrap(), PathBuf::from("process-watch.local.toml"));
 }

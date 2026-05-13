@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ConsoleConfig {
+pub struct ProcessWatchConfig {
     pub services: BTreeMap<String, ServiceConfig>,
     #[serde(default)]
     pub workflows: BTreeMap<String, WorkflowConfig>,
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn deserializes_dynamic_service_names() {
-        let config: ConsoleConfig = toml::from_str(
+        let config: ProcessWatchConfig = toml::from_str(
             r#"
             [services.api]
             label = "API"
@@ -90,7 +90,7 @@ mod tests {
 
             [services.api.log_relay]
             enabled = true
-            target = "console"
+            target = "process_watch"
 
             [workflows.check]
             label = "Check"
