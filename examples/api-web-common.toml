@@ -1,0 +1,156 @@
+
+# Example process-watch config for a Rust workspace with:
+# - API crate
+# - Trunk web frontend
+# - common/shared crate
+# - local database/cache services
+# - docs workflows
+
+# Each [services.<name>] table defines a long-running process that
+# process-watch can start, restart, and monitor. The table name is the service
+# id used by child tables such as readiness and log_relay.
+[services.api]
+# Human-readable name shown in the terminal UI.
+label = "API server"
+# Command and arguments used to start the service.
+command = ["cargo", "run", "-p", "api"]
+# Files and directories that should trigger a service restart when they change.
+# Relative paths are resolved from the directory containing this config file.
+watch = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/api",
+    "crates/common",
+    "migrations",
+]
+# Primary port exposed by the service, used for display and coordination.
+port = 3000
+# Environment variables passed to the service process.
+env = { RUST_LOG = "api=debug,tower_http=info", DATABASE_URL = "postgres://app:app@localhost:5432/app" }
+
+# Readiness checks decide when a service should be treated as available.
+[services.api.readiness]
+# HTTP checks request the given URL and compare the response status.
+kind = "http"
+url = "http://127.0.0.1:3000/health"
+expected_status = 200
+
+# Log relay controls whether service output is forwarded to a named target.
+[services.api.log_relay]
+enabled = true
+target = "dev.api"
+
+# Trunk dev server for the Rust web frontend.
+[services.web]
+label = "Web frontend"
+command = [
+    "trunk",
+    "serve",
+    "--config",
+    "apps/web/Trunk.toml",
+    "--port",
+    "8080",
+]
+watch = ["Cargo.toml", "Cargo.lock", "apps/web", "crates/common"]
+port = 8080
+env = { RUST_LOG = "web=debug" }
+
+# Treat the frontend as ready once the Trunk server responds successfully.
+[services.web.readiness]
+kind = "http"
+url = "http://127.0.0.1:8080"
+expected_status = 200
+
+# Forward web logs separately from API logs.
+[services.web.log_relay]
+enabled = true
+target = "dev.web"
+
+# Database service started through Docker Compose.
+[services.database]
+label = "Database"
+command = ["docker", "compose", "up", "database"]
+watch = ["compose.yaml"]
+port = 5432
+
+# TCP checks connect to a host and port instead of making an HTTP request.
+[services.database.readiness]
+kind = "tcp"
+host = "127.0.0.1"
+port = 5432
+
+# Forward database logs to their own relay target.
+[services.database.log_relay]
+enabled = true
+target = "dev.database"
+
+# Cache service started through Docker Compose.
+[services.cache]
+label = "Cache"
+command = ["docker", "compose", "up", "cache"]
+watch = ["compose.yaml"]
+port = 6379
+
+# Redis-style TCP readiness check for the cache port.
+[services.cache.readiness]
+kind = "tcp"
+host = "127.0.0.1"
+port = 6379
+
+# Keep cache logs local by disabling relay forwarding.
+[services.cache.log_relay]
+enabled = false
+target = "dev.cache"
+
+# Each [workflows.<name>] table defines a one-shot command. Workflows use the
+# same label, command, watch, and optional env fields as services, but they are
+# run on demand or when watched paths change rather than kept alive.
+[workflows.check]
+label = "Check workspace"
+command = ["cargo", "check", "--workspace", "--all-targets"]
+watch = ["Cargo.toml", "Cargo.lock", "crates/api", "crates/common", "apps/web"]
+
+# Full workspace test run, including integration tests.
+[workflows.test]
+label = "Test workspace"
+command = ["cargo", "test", "--workspace"]
+watch = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/api",
+    "crates/common",
+    "apps/web",
+    "tests",
+]
+
+# Production-style frontend asset build.
+[workflows.frontend]
+label = "Build web assets"
+command = ["trunk", "build", "--config", "apps/web/Trunk.toml"]
+watch = ["apps/web", "crates/common"]
+
+# Rust documentation build for all workspace crates.
+[workflows.docs]
+label = "Build Rust docs"
+command = ["cargo", "doc", "--workspace", "--no-deps"]
+watch = ["Cargo.toml", "Cargo.lock", "crates/api", "crates/common"]
+
+# Each [docs.<name>] table defines a documentation or preview shortcut. Use
+# path for local generated files, url for served pages, and workflow to name the
+# workflow that should build or refresh the target.
+[docs.rustdoc]
+label = "Rustdoc"
+path = "target/doc"
+workflow = "docs"
+
+# Opens the frontend preview served by the web service.
+[docs.frontend]
+label = "Frontend preview"
+url = "http://127.0.0.1:8080"
+workflow = "frontend"
+
+# Opens API documentation served by the API service.
+[docs.api]
+label = "API docs"
+url = "http://127.0.0.1:3000/docs"
+workflow = "docs"
