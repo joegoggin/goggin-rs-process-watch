@@ -6,6 +6,8 @@ pub enum ProcessWatchError {
     Cli(#[from] clap::Error),
     #[error(transparent)]
     Config(#[from] ConfigError),
+    #[error(transparent)]
+    Validation(#[from] ValidationErrors),
 }
 
 impl ProcessWatchError {
@@ -32,4 +34,46 @@ pub enum ConfigError {
         path: PathBuf,
         source: toml::de::Error,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{field}: {message}")]
+pub struct ValidationError {
+    pub field: String,
+    pub message: String,
+}
+
+pub type ValidationResult = Result<(), Vec<ValidationError>>;
+
+pub(crate) fn validation_error(
+    field: impl Into<String>,
+    message: impl Into<String>,
+) -> ValidationError {
+    ValidationError {
+        field: field.into(),
+        message: message.into(),
+    }
+}
+
+#[derive(Debug)]
+pub struct ValidationErrors(pub Vec<ValidationError>);
+
+impl std::fmt::Display for ValidationErrors {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(formatter, "invalid config:")?;
+
+        for error in &self.0 {
+            writeln!(formatter, "{error}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl std::error::Error for ValidationErrors {}
+
+impl From<Vec<ValidationError>> for ProcessWatchError {
+    fn from(errors: Vec<ValidationError>) -> ProcessWatchError {
+        ProcessWatchError::Validation(ValidationErrors(errors))
+    }
 }

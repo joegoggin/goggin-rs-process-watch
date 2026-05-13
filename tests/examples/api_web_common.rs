@@ -7,14 +7,32 @@ fn sample_config_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/api-web-common.toml")
 }
 
+fn create_sample_watch_paths(dir: &std::path::Path) {
+    for file in ["Cargo.toml", "Cargo.lock", "compose.yaml"] {
+        std::fs::write(dir.join(file), "").unwrap();
+    }
+
+    for directory in [
+        "apps/web",
+        "crates/api",
+        "crates/common",
+        "migrations",
+        "tests",
+    ] {
+        std::fs::create_dir_all(dir.join(directory)).unwrap();
+    }
+}
+
 #[test]
 fn api_web_common_sample_config_loads_through_cli() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("process-watch.toml");
+    std::fs::copy(sample_config_path(), &config).unwrap();
+    create_sample_watch_paths(dir.path());
+
     let mut cmd = Command::cargo_bin("goggin-rs-process-watch").unwrap();
 
-    cmd.args(["run", "--config"])
-        .arg(sample_config_path())
-        .assert()
-        .success();
+    cmd.args(["run", "--config"]).arg(config).assert().success();
 }
 
 #[test]

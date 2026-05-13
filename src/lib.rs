@@ -1,5 +1,7 @@
 mod core;
 
+pub use crate::core::{config, error};
+
 use core::cli::{Cli, Command};
 use core::error::ProcessWatchError;
 
@@ -23,7 +25,8 @@ where
 fn dispatch(cli: Cli) -> Result<(), ProcessWatchError> {
     match cli.command {
         Command::Run { config } => {
-            let _config = LoadedConfig::new(config.as_deref())?;
+            let loaded = LoadedConfig::new(config.as_deref())?;
+            loaded.config.validate(&loaded.base_dir)?;
             Ok(())
         }
     }

@@ -6,7 +6,7 @@ use std::{
 use camino::Utf8PathBuf;
 use serde::Deserialize;
 
-use crate::core::error::ConfigError;
+use crate::core::error::{ConfigError, ValidationError, ValidationResult, validation_error};
 
 pub const DEFAULT_CONFIG_FILE: &str = "process-watch.toml";
 
@@ -75,6 +75,184 @@ pub struct DocsConfig {
     pub workflow: Option<String>,
 }
 
+impl ProcessWatchConfig {
+    pub fn validate(&self, base_dir: &Path) -> ValidationResult {
+        let mut errors = Vec::new();
+
+        if self.services.is_empty() {
+            errors.push(validation_error(
+                "services",
+                "at least one service is required",
+            ));
+        }
+
+        for (name, service) in &self.services {
+            service.validate(name, base_dir, &mut errors);
+        }
+
+        for (name, workflow) in &self.workflows {
+            workflow.validate(name, base_dir, &mut errors);
+        }
+
+        for (name, docs) in &self.docs {
+            docs.validate(name, &self.workflows, &mut errors);
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+impl ServiceConfig {
+    fn validate(&self, name: &str, base_dir: &Path, errors: &mut Vec<ValidationError>) {
+        validate_command(&format!("services.{name}.command"), &self.command, errors);
+
+        for (index, path) in self.watch.iter().enumerate() {
+            if !resolve_config_path(base_dir, path).exists() {
+                errors.push(validation_error(
+                    format!("services.{name}.watch[{index}]"),
+                    format!("path does not exist: {path}"),
+                ));
+            }
+        }
+
+        if let Some(readiness) = &self.readiness {
+            readiness.validate(&format!("services.{name}.readiness"), errors);
+        }
+
+        if let Some(log_relay) = &self.log_relay {
+            log_relay.validate(&format!("services.{name}.log_relay"), errors);
+        }
+    }
+}
+
+impl ReadinessCheck {
+    fn validate(&self, field: &str, errors: &mut Vec<ValidationError>) {
+        match self {
+            ReadinessCheck::Http {
+                url,
+                expected_status,
+            } => {
+                if !(url.starts_with("http://") || url.starts_with("https://")) {
+                    errors.push(validation_error(
+                        format!("{field}.url"),
+                        "HTTP readiness URL must start with http:// or https://",
+                    ));
+                }
+
+                if expected_status.is_some_and(|status| !(100..=599).contains(&status)) {
+                    errors.push(validation_error(
+                        format!("{field}.expected_status"),
+                        "expected status must be between 100 and 599",
+                    ));
+                }
+            }
+            ReadinessCheck::Tcp { host, port } => {
+                if host.trim().is_empty() {
+                    errors.push(validation_error(
+                        format!("{field}.host"),
+                        "TCP readiness host must not be empty",
+                    ));
+                }
+
+                if *port == 0 {
+                    errors.push(validation_error(
+                        format!("{field}.port"),
+                        "TCP readiness port must be greater than 0",
+                    ));
+                }
+            }
+        }
+    }
+}
+
+impl LogRelayConfig {
+    fn validate(&self, field: &str, errors: &mut Vec<ValidationError>) {
+        if self.enabled
+            && self
+                .target
+                .as_deref()
+                .is_some_and(|target| target.trim().is_empty())
+        {
+            errors.push(validation_error(
+                format!("{field}.target"),
+                "target must not be empty when log relay is enabled",
+            ));
+        }
+    }
+}
+
+impl WorkflowConfig {
+    fn validate(&self, name: &str, base_dir: &Path, errors: &mut Vec<ValidationError>) {
+        validate_command(&format!("workflows.{name}.command"), &self.command, errors);
+
+        for (index, path) in self.watch.iter().enumerate() {
+            if !resolve_config_path(base_dir, path).exists() {
+                errors.push(validation_error(
+                    format!("workflows.{name}.watch[{index}]"),
+                    format!("path does not exist: {path}"),
+                ));
+            }
+        }
+    }
+}
+
+impl DocsConfig {
+    fn validate(
+        &self,
+        name: &str,
+        workflows: &BTreeMap<String, WorkflowConfig>,
+        errors: &mut Vec<ValidationError>,
+    ) {
+        if self.path.is_none() && self.url.is_none() {
+            errors.push(validation_error(
+                format!("docs.{name}"),
+                "docs entry must define either path or url",
+            ));
+        }
+
+        if let Some(workflow) = &self.workflow
+            && !workflows.contains_key(workflow)
+        {
+            errors.push(validation_error(
+                format!("docs.{name}.workflow"),
+                format!("unknown workflow reference: {workflow}"),
+            ));
+        }
+    }
+}
+
+fn validate_command(field: &str, command: &[String], errors: &mut Vec<ValidationError>) {
+    if command.is_empty() {
+        errors.push(validation_error(
+            field,
+            "command must include at least one argument",
+        ));
+    }
+
+    for (index, arg) in command.iter().enumerate() {
+        if arg.trim().is_empty() {
+            errors.push(validation_error(
+                format!("{field}[{index}]"),
+                "command arguments must not be empty",
+            ));
+        }
+    }
+}
+
+fn resolve_config_path(base_dir: &Path, path: &camino::Utf8Path) -> PathBuf {
+    let path = Path::new(path.as_str());
+
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
+    }
+}
+
 #[derive(Debug)]
 pub struct LoadedConfig {
     pub path: PathBuf,
@@ -113,112 +291,6 @@ impl LoadedConfig {
     }
 
     pub fn resolve_path(&self, path: &camino::Utf8Path) -> PathBuf {
-        let path = Path::new(path.as_str());
-
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.base_dir.join(path)
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deserializes_dynamic_service_names() {
-        let config: ProcessWatchConfig = toml::from_str(
-            r#"
-            [services.api]
-            label = "API"
-            command = ["cargo", "run", "-p", "api"]
-            watch = ["crates/api", "crates/common"]
-            port = 8080
-            env = { RUST_LOG = "info" }
-
-            [services.api.readiness]
-            kind = "http"
-            url = "http://localhost:8080/health"
-            expected_status = 200
-
-            [services.api.log_relay]
-            enabled = true
-            target = "process_watch"
-
-            [workflows.check]
-            label = "Check"
-            command = ["cargo", "check", "--workspace"]
-
-            [docs.rustdoc]
-            label = "Rustdoc"
-            path = "target/doc"
-            workflow = "check"
-            "#,
-        )
-        .unwrap();
-
-        let service = config.services.get("api").unwrap();
-        assert_eq!(service.label.as_deref(), Some("API"));
-        assert_eq!(service.command[0], "cargo");
-        assert_eq!(service.watch.len(), 2);
-        assert!(matches!(
-            service.readiness,
-            Some(ReadinessCheck::Http { .. })
-        ));
-        assert!(config.workflows.contains_key("check"));
-        assert!(config.docs.contains_key("rustdoc"));
-    }
-
-    #[test]
-    fn resolves_relative_paths_from_config_parent() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nested").join("process-watch.toml");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &path,
-            r#"
-        [services.api]
-        command = ["cargo", "run"]
-        watch = ["crates/api"]
-        "#,
-        )
-        .unwrap();
-
-        let loaded = LoadedConfig::new(Some(&path)).unwrap();
-        let service = loaded.config.services.get("api").unwrap();
-        let resolved = loaded.resolve_path(&service.watch[0]);
-
-        assert_eq!(resolved, path.parent().unwrap().join("crates/api"));
-    }
-
-    #[test]
-    fn resolve_path_leaves_absolute_paths_unchanged() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("process-watch.toml");
-        let absolute_watch = dir.path().join("src");
-        let absolute_watch = camino::Utf8PathBuf::from_path_buf(absolute_watch).unwrap();
-
-        std::fs::write(
-            &path,
-            format!(
-                r#"
-            [services.api]
-            command = ["cargo", "run"]
-            watch = ["{}"]
-            "#,
-                absolute_watch
-            ),
-        )
-        .unwrap();
-
-        let loaded = LoadedConfig::new(Some(&path)).unwrap();
-        let service = loaded.config.services.get("api").unwrap();
-
-        assert_eq!(
-            loaded.resolve_path(&service.watch[0]),
-            absolute_watch.as_std_path()
-        );
+        resolve_config_path(&self.base_dir, path)
     }
 }
